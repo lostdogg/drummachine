@@ -1,0 +1,91 @@
+; ---------------------------------------------------------------------------
+; i2s_output.pio  –  I2S stereo output for PCM5102A
+; ---------------------------------------------------------------------------
+; Pins (consecutive, lowest = DIN):
+;   out base  = I2S_DIN_PIN  (data)
+;   side base = I2S_BCK_PIN  (bit clock)
+;   side[1]   = I2S_LRCK_PIN (word-select / L–R clock)
+;
+; The TX FIFO feeds 32-bit words: LEFT (upper 16 bits) | RIGHT (lower 16 bits).
+; Each 32-bit word is shifted out MSB-first, 16 bits per channel, on the
+; falling edge of BCK.  LRCK is LOW for the left channel, HIGH for the right.
+;
+; Clocks:  BCK = sys_clk / (2 * divider)
+;          LRCK = BCK / 32  (16 bits × 2 channels)
+; ---------------------------------------------------------------------------
+.program i2s_output
+.side_set 2          ; side[0]=BCK, side[1]=LRCK
+
+; ---- Left channel (LRCK = 0) ---------------------------------------------
+    set x, 14                   side 0b01   ; pre-load counter, BCK high, LRCK low
+left_loop:
+    out pins, 1                 side 0b00   ; DIN valid, BCK falls (data captured on rise)
+    jmp x-- left_loop           side 0b01   ; BCK rises; repeat for bits 14..0
+
+; Last (16th) bit of left channel, LRCK transitions to high for right channel
+    out pins, 1                 side 0b10   ; DIN valid, BCK falls, LRCK -> high
+
+; ---- Right channel (LRCK = 1) --------------------------------------------
+    set x, 14                   side 0b11   ; pre-load counter, BCK high, LRCK high
+right_loop:
+    out pins, 1                 side 0b10   ; DIN valid, BCK falls
+    jmp x-- right_loop          side 0b11   ; BCK rises; repeat for bits 14..0
+
+; Last (16th) bit of right channel – BCK falls, LRCK transitions back to low
+    out pins, 1                 side 0b00   ; DIN valid, BCK falls, LRCK -> low
+
+; -----------------------------------------------------------------------
+% c-sdk {
+#include "hardware/clocks.h"
+#include "hardware/pio.h"
+
+// Initialise and start the I2S PIO state machine.
+//   pio         – PIO instance (pio0 or pio1)
+//   sm          – state machine index (0..3)
+//   offset      – program load offset (from pio_add_program)
+//   din_pin     – GPIO for DIN  (data output; may be any free GPIO)
+//   bck_pin     – GPIO for BCK  (side-set base); LRCK must be bck_pin + 1
+//   sample_rate – desired audio sample rate in Hz
+//
+// Note: the side-set uses two consecutive pins starting at bck_pin:
+//   bck_pin     → BCK  (bit clock)
+//   bck_pin + 1 → LRCK (word-select / left-right clock)
+// Ensure these two GPIOs are consecutive on the board.
+static inline void i2s_output_program_init(PIO pio, uint sm, uint offset,
+                                           uint din_pin, uint bck_pin,
+                                           uint sample_rate) {
+    // Validate that LRCK is the GPIO immediately above BCK
+    assert(bck_pin + 1 < 30 && "bck_pin + 1 must be a valid GPIO for LRCK");
+
+    // Configure the three GPIO pins
+    pio_gpio_init(pio, din_pin);
+    pio_gpio_init(pio, bck_pin);
+    pio_gpio_init(pio, bck_pin + 1);  // LRCK
+
+    pio_sm_set_consecutive_pindirs(pio, sm, din_pin,   1, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, bck_pin,   2, true);
+
+    pio_sm_config c = i2s_output_program_get_default_config(offset);
+
+    // OUT pins: 1 pin starting at din_pin
+    sm_config_set_out_pins(&c, din_pin, 1);
+
+    // SIDE-SET pins: 2 pins starting at bck_pin (BCK, LRCK)
+    sm_config_set_sideset_pins(&c, bck_pin);
+
+    // Shift 32 bits from TX FIFO, MSB first, autopull threshold = 32
+    sm_config_set_out_shift(&c, false, true, 32);
+
+    // Join TX FIFO for maximum depth
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+
+    // Clock divider: BCK = sys_clk / (2 * clkdiv)
+    // LRCK = BCK / 32  =>  sample_rate = sys_clk / (64 * clkdiv)
+    // clkdiv = sys_clk / (64 * sample_rate)
+    float clkdiv = (float)clock_get_hz(clk_sys) / (64.0f * (float)sample_rate);
+    sm_config_set_clkdiv(&c, clkdiv);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
