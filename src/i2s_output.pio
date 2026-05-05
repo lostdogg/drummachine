@@ -54,8 +54,8 @@ right_loop:
 static inline void i2s_output_program_init(PIO pio, uint sm, uint offset,
                                            uint din_pin, uint bck_pin,
                                            uint sample_rate) {
-    // Validate that LRCK is the GPIO immediately above BCK
-    assert(bck_pin + 1 < 30 && "bck_pin + 1 must be a valid GPIO for LRCK");
+    // Validate that LRCK (bck_pin + 1) stays within GPIO 0-29 range
+    assert(bck_pin < 29 && "bck_pin must be <= 28 so bck_pin + 1 is a valid GPIO for LRCK");
 
     // Configure the three GPIO pins
     pio_gpio_init(pio, din_pin);

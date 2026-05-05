@@ -101,6 +101,7 @@ void seq_init(DrumSequencer *seq, int bpm) {
     seq->pattern_bank   = 0;
     seq->pitch_factor   = 1.0f;
     seq->current_step   = 0;
+    seq->rng_state      = 0xDEADBEEFu;
     // Load default bank 0 pattern
     memcpy(seq->pattern, default_patterns[0], sizeof(seq->pattern));
 }
@@ -156,8 +157,6 @@ uint32_t seq_step_interval_us(const DrumSequencer *seq) {
 
 void seq_render_audio(DrumSequencer *seq, uint8_t active_tracks,
                       int16_t *buf, uint32_t buf_samples) {
-    static uint32_t rng = 0xDEADBEEFu;
-
     // Accumulators for each voice (indexed by sample within this buffer)
     for (uint32_t i = 0; i < buf_samples; ++i) {
         float mix = 0.0f;
@@ -166,13 +165,13 @@ void seq_render_audio(DrumSequencer *seq, uint8_t active_tracks,
             mix += voice_kick(i, seq->pitch_factor);
 
         if (active_tracks & (1u << TRACK_SNARE))
-            mix += voice_snare(i, seq->pitch_factor, &rng);
+            mix += voice_snare(i, seq->pitch_factor, &seq->rng_state);
 
         if (active_tracks & (1u << TRACK_HIHAT))
-            mix += voice_hihat(i, &rng);
+            mix += voice_hihat(i, &seq->rng_state);
 
         if (active_tracks & (1u << TRACK_CLAP))
-            mix += voice_clap(i, seq->pitch_factor, &rng);
+            mix += voice_clap(i, seq->pitch_factor, &seq->rng_state);
 
         // Soft clip and scale by master volume
         if (mix >  1.0f) mix =  1.0f;

@@ -25,6 +25,7 @@ typedef struct {
     float master_volume;   // 0.0 .. 1.0
     int   pattern_bank;    // 0..3 (selected via pot)
     float pitch_factor;    // 0.5 .. 2.0 (transpose all hits)
+    uint32_t rng_state;    // per-instance LCG state for noise voices
 } DrumSequencer;
 
 // Initialise sequencer with default BPM and a classic 4/4 pattern.
